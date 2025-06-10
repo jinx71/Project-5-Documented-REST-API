@@ -1,0 +1,53 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum InstrumentStatus {
+  ACTIVE
+  UNDER_MAINTENANCE
+  OUT_OF_SERVICE
+  RETIRED
+}
+
+enum CalibrationResult {
+  PASS
+  FAIL
+  CONDITIONAL
+}
+
+model Instrument {
+  id                 String              @id @default(uuid())
+  name               String
+  serialNumber       String              @unique
+  category           String
+  manufacturer       String?
+  location           String
+  status             InstrumentStatus    @default(ACTIVE)
+  calibrationDueDate DateTime?
+  calibrations       CalibrationRecord[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@index([status])
+  @@index([category])
+}
+
+model CalibrationRecord {
+  id                String            @id @default(uuid())
+  instrumentId      String
+  instrument        Instrument        @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  performedBy       String
+  performedAt       DateTime
+  result            CalibrationResult
+  certificateNumber String?
+  notes             String?
+  nextDueDate       DateTime?
+  createdAt         DateTime          @default(now())
+
+  @@index([instrumentId])
+}
