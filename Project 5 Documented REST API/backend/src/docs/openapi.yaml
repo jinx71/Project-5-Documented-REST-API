@@ -1,0 +1,345 @@
+openapi: 3.0.3
+info:
+  title: PharmaTrack API
+  version: 1.0.0
+  description: |
+    REST API for tracking pharmaceutical instruments and their calibration records.
+
+    Built with GMP workflows in mind: instruments carry a calibration due date,
+    and every calibration event is logged with the performer, result, and
+    certificate number — mirroring real audit-trail expectations (FDA / MHRA).
+  contact:
+    name: Md. Sazed Ul Karim
+    url: https://github.com/jinx71
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:4000/api/v1
+    description: Local development
+  - url: https://pharmatrack-api.up.railway.app/api/v1
+    description: Production (Railway)
+
+tags:
+  - name: Instruments
+    description: CRUD operations for pharmaceutical instruments
+  - name: Calibrations
+    description: Calibration records nested under an instrument
+  - name: Health
+    description: Service health check
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      responses:
+        '200':
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /instruments:
+    get:
+      tags: [Instruments]
+      summary: List instruments
+      description: Paginated list with optional filtering by status, category, and free-text search.
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+        - in: query
+          name: status
+          schema: { $ref: '#/components/schemas/InstrumentStatus' }
+        - in: query
+          name: category
+          schema: { type: string }
+          example: HPLC
+        - in: query
+          name: search
+          description: Matches against name or serial number (case-insensitive)
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated instruments
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Instrument' }
+                      meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    post:
+      tags: [Instruments]
+      summary: Create an instrument
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateInstrument' }
+      responses:
+        '201':
+          description: Instrument created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Instrument' }
+        '409':
+          description: Duplicate serial number
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /instruments/{id}:
+    parameters:
+      - $ref: '#/components/parameters/InstrumentId'
+    get:
+      tags: [Instruments]
+      summary: Get an instrument by ID
+      description: Includes the five most recent calibration records.
+      responses:
+        '200':
+          description: Instrument found
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Instrument' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Instruments]
+      summary: Update an instrument
+      description: Partial update — supply only the fields to change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateInstrument' }
+      responses:
+        '200':
+          description: Instrument updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Instrument' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Duplicate serial number
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [Instruments]
+      summary: Delete an instrument
+      description: Cascades to all of its calibration records.
+      responses:
+        '200':
+          description: Instrument deleted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /instruments/{instrumentId}/calibrations:
+    parameters:
+      - in: path
+        name: instrumentId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Calibrations]
+      summary: List calibration records for an instrument
+      responses:
+        '200':
+          description: Calibration records, newest first
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/CalibrationRecord' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Calibrations]
+      summary: Log a calibration record
+      description: |
+        Creates a calibration record. If `nextDueDate` is supplied, the parent
+        instrument's `calibrationDueDate` is updated in the same transaction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCalibration' }
+      responses:
+        '201':
+          description: Calibration record created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/CalibrationRecord' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+components:
+  parameters:
+    InstrumentId:
+      in: path
+      name: id
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    ValidationError:
+      description: Request failed validation
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ApiError'
+              - type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field: { type: string, example: body.serialNumber }
+                        message: { type: string, example: Required }
+
+  schemas:
+    InstrumentStatus:
+      type: string
+      enum: [ACTIVE, UNDER_MAINTENANCE, OUT_OF_SERVICE, RETIRED]
+
+    CalibrationResult:
+      type: string
+      enum: [PASS, FAIL, CONDITIONAL]
+
+    ApiResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        data: { nullable: true }
+        message: { type: string, example: Success }
+
+    ApiError:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        data: { nullable: true, example: null }
+        message: { type: string, example: Instrument not found }
+
+    PaginationMeta:
+      type: object
+      properties:
+        page: { type: integer, example: 1 }
+        limit: { type: integer, example: 10 }
+        total: { type: integer, example: 42 }
+        totalPages: { type: integer, example: 5 }
+
+    Instrument:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: Agilent 1260 Infinity II }
+        serialNumber: { type: string, example: HPLC-2024-0042 }
+        category: { type: string, example: HPLC }
+        manufacturer: { type: string, nullable: true, example: Agilent Technologies }
+        location: { type: string, example: QC Lab — Block B }
+        status: { $ref: '#/components/schemas/InstrumentStatus' }
+        calibrationDueDate: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreateInstrument:
+      type: object
+      required: [name, serialNumber, category, location]
+      properties:
+        name: { type: string, example: Agilent 1260 Infinity II }
+        serialNumber: { type: string, example: HPLC-2024-0042 }
+        category: { type: string, example: HPLC }
+        manufacturer: { type: string, example: Agilent Technologies }
+        location: { type: string, example: QC Lab — Block B }
+        status: { $ref: '#/components/schemas/InstrumentStatus' }
+        calibrationDueDate: { type: string, format: date-time }
+
+    UpdateInstrument:
+      type: object
+      minProperties: 1
+      properties:
+        name: { type: string }
+        serialNumber: { type: string }
+        category: { type: string }
+        manufacturer: { type: string, nullable: true }
+        location: { type: string }
+        status: { $ref: '#/components/schemas/InstrumentStatus' }
+        calibrationDueDate: { type: string, format: date-time, nullable: true }
+
+    CalibrationRecord:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        instrumentId: { type: string, format: uuid }
+        performedBy: { type: string, example: S. Karim }
+        performedAt: { type: string, format: date-time }
+        result: { $ref: '#/components/schemas/CalibrationResult' }
+        certificateNumber: { type: string, nullable: true, example: CAL-2026-0117 }
+        notes: { type: string, nullable: true }
+        nextDueDate: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    CreateCalibration:
+      type: object
+      required: [performedBy, performedAt, result]
+      properties:
+        performedBy: { type: string, example: S. Karim }
+        performedAt: { type: string, format: date-time, example: '2026-06-11T09:00:00Z' }
+        result: { $ref: '#/components/schemas/CalibrationResult' }
+        certificateNumber: { type: string, example: CAL-2026-0117 }
+        notes: { type: string, example: Calibrated against NIST-traceable reference }
+        nextDueDate: { type: string, format: date-time, example: '2026-12-11T09:00:00Z' }
